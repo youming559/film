@@ -20,3 +20,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Movie"
 include(":app")
+include(":companion")
