@@ -1,12 +1,12 @@
 package com.example.movie.companion
 
-import android.content.ContentValues
-import android.content.Context
-import android.net.Uri
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -34,14 +35,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
+import androidx.core.app.NotificationManagerCompat
+import com.example.movie.companion.data.CompanionItem
+import com.example.movie.companion.data.WatchlistGateway
+import com.example.movie.companion.reminder.ReminderScheduler
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 伴生模块主界面：
- * 独立启动 → 通过 ContentResolver 读取/删除/评分主 App 的看单数据。
+ * 1) 读/写主 App 的看单（ContentResolver）
+ * 2) 通知提醒中心（WorkManager 定时 + 通知内直接操作）
  */
 class CompanionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,124 +61,35 @@ class CompanionActivity : ComponentActivity() {
     }
 }
 
-// ---------- 跨 App 数据访问层 ----------
-
-private data class CompanionItem(
-    val id: Int,
-    val title: String,
-    val mediaType: String,
-    val releaseDate: String?,
-    val voteAverage: Double,
-    val userRating: Float?
-)
-
-private object WatchlistGateway {
-
-    private const val TAG = "CompanionGateway"
-    private const val AUTHORITY = "com.example.movie.provider"
-    private val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY/watchlist")
-
-    /** 读：主 App 的全部看单 */
-    suspend fun load(context: Context): List<CompanionItem> = withContext(Dispatchers.IO) {
-        try {
-            val list = mutableListOf<CompanionItem>()
-            context.contentResolver.query(
-                CONTENT_URI,
-                null,
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                val idIdx = cursor.getColumnIndexOrThrow("id")
-                val titleIdx = cursor.getColumnIndexOrThrow("title")
-                val typeIdx = cursor.getColumnIndexOrThrow("mediaType")
-                val dateIdx = cursor.getColumnIndexOrThrow("releaseDate")
-                val voteIdx = cursor.getColumnIndexOrThrow("voteAverage")
-                val ratingIdx = cursor.getColumnIndexOrThrow("userRating")
-                while (cursor.moveToNext()) {
-                    list += CompanionItem(
-                        id = cursor.getInt(idIdx),
-                        title = cursor.getString(titleIdx) ?: "未命名",
-                        mediaType = cursor.getString(typeIdx) ?: "movie",
-                        releaseDate = cursor.getString(dateIdx),
-                        voteAverage = cursor.getDouble(voteIdx),
-                        userRating = if (cursor.isNull(ratingIdx)) null else cursor.getFloat(ratingIdx)
-                    )
-                }
-            } ?: throw IllegalStateException("主 App 返回了空数据（Provider 可能被禁用）")
-            list
-        } catch (e: SecurityException) {
-            Log.e(TAG, "读取被拒绝", e)
-            throw IllegalStateException("没有权限读取主 App 数据：${e.message}", e)
-        } catch (e: IllegalArgumentException) {
-            Log.e(TAG, "Provider 不存在", e)
-            throw IllegalStateException("找不到主 App 的数据源，请先安装并打开「影视追踪」", e)
-        } catch (e: IllegalStateException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "读取失败", e)
-            throw IllegalStateException("读取失败：${e.message}", e)
-        }
-    }
-
-    /** 写：往主 App 的看单里加一条示例数据 */
-    suspend fun addSample(context: Context): String = withContext(Dispatchers.IO) {
-        try {
-            val values = ContentValues().apply {
-                put("id", 900000 + (System.currentTimeMillis() % 1000).toInt())
-                put("mediaType", "movie")
-                put("title", "伴生模块添加的示例")
-                put("posterPath", null as String?)
-                put("overview", "这条数据由伴生模块写入，主 App 打开后可以看到")
-                put("releaseDate", "2026-12-01")
-                put("voteAverage", 7.5)
-                put("remindEnabled", 1)
-                put("addedAt", System.currentTimeMillis())
-            }
-            val uri = context.contentResolver.insert(CONTENT_URI, values)
-                ?: throw IllegalStateException("主 App 未返回插入结果")
-            "已写入主 App 看单：$uri"
-        } catch (e: IllegalArgumentException) {
-            throw IllegalStateException("找不到主 App 的数据源，请先安装并打开「影视追踪」", e)
-        } catch (e: Exception) {
-            Log.e(TAG, "写入失败", e)
-            throw IllegalStateException("写入失败：${e.message}", e)
-        }
-    }
-
-    /** 写：删除主 App 里的一条看单 */
-    suspend fun delete(context: Context, id: Int): Int = withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver.delete(Uri.withAppendedPath(CONTENT_URI, id.toString()), null, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "删除失败", e)
-            throw IllegalStateException("删除失败：${e.message}", e)
-        }
-    }
-
-    /** 写：给主 App 里的条目打分（0~10） */
-    suspend fun rate(context: Context, id: Int, rating: Float): Int = withContext(Dispatchers.IO) {
-        try {
-            val values = ContentValues().apply { put("userRating", rating) }
-            context.contentResolver.update(Uri.withAppendedPath(CONTENT_URI, id.toString()), values, null, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "评分失败", e)
-            throw IllegalStateException("评分失败：${e.message}", e)
-        }
-    }
-}
-
-// ---------- UI ----------
-
 @Composable
 private fun CompanionScreen() {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var rows by remember { mutableStateOf<List<CompanionItem>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+
+    var reminderOn by remember { mutableStateOf(ReminderScheduler.isEnabled(context)) }
+    var notificationsEnabled by remember {
+        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationsEnabled = granted &&
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (!notificationsEnabled) message = "没拿到通知权限，提醒只会静默失败"
+    }
+
+    // Android 13+ 首次进入就申请通知权限
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationsEnabled) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     suspend fun refresh() {
         loading = true
@@ -191,13 +107,70 @@ private fun CompanionScreen() {
     LaunchedEffect(Unit) { refresh() }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("伴生模块 · 看单查看器", style = MaterialTheme.typography.titleLarge)
+        Text("伴生模块 · 看单助手", style = MaterialTheme.typography.titleLarge)
         Text(
-            "数据来源：主 App 的 ContentProvider（content://com.example.movie.provider/watchlist）",
+            "数据来源：主 App 的 ContentProvider（content://${WatchlistGateway.AUTHORITY}/watchlist）",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
+        Spacer(Modifier.height(12.dp))
+
+        // ---------- 通知提醒中心 ----------
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("通知提醒中心", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "每天检查一次看单，7 天内上映会自动推送；通知里的按钮可以直接删除或打分，不用打开 App。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (reminderOn) "状态：每日提醒已开启" else "状态：每日提醒未开启",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (reminderOn) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!notificationsEnabled) {
+                    Text(
+                        "通知权限未开启，提醒不会显示",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(onClick = {
+                        if (!notificationsEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            message = "请先允许通知权限，再开启每日提醒"
+                        } else {
+                            ReminderScheduler.enableDaily(context)
+                            reminderOn = true
+                            message = "已开启每日提醒（1 分钟后会先跑一次）"
+                        }
+                    }) { Text("开启每日提醒") }
+
+                    OutlinedButton(onClick = {
+                        ReminderScheduler.runNow(context)
+                        message = "已触发一次提醒检查，稍等通知"
+                    }) { Text("立即提醒一次") }
+
+                    TextButton(onClick = {
+                        ReminderScheduler.disable(context)
+                        reminderOn = false
+                        message = "已关闭每日提醒"
+                    }, enabled = reminderOn) { Text("关闭") }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider()
         Spacer(Modifier.height(12.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -219,7 +192,7 @@ private fun CompanionScreen() {
             Spacer(Modifier.height(8.dp))
             Card {
                 Text(
-                    "⚠ $it",
+                    "错误：$it",
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(12.dp)
                 )

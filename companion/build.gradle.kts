@@ -49,4 +49,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // 通知提醒中心：定时任务 + 通知
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 }

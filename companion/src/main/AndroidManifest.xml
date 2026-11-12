@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 通知提醒中心需要通知权限（Android 13+） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 伴生模块：独立可启动的 App，通过主 App 的 ContentProvider 读写看单数据 -->
     <queries>
         <provider android:authorities="com.example.movie.provider" />
@@ -22,6 +25,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 通知按钮的接收器：直接在通知里删除/打分，不打开界面 -->
+        <receiver
+            android:name=".reminder.NotificationActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
