@@ -29,6 +29,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 把看单数据开放给伴生模块（另一个 APK）读写 -->
+        <provider
+            android:name=".data.provider.WatchlistProvider"
+            android:authorities="com.example.movie.provider"
+            android:exported="true"
+            android:label="影视追踪看单" />
     </application>
 
 </manifest>
