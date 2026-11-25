@@ -56,6 +56,9 @@ interface WatchlistDao {
     @Query("DELETE FROM watchlist WHERE id = :id")
     suspend fun delete(id: Int)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM watchlist WHERE id = :id)")
+    suspend fun exists(id: Int): Boolean
+
     @Query("UPDATE watchlist SET userRating = :rating WHERE id = :id")
     suspend fun updateRating(id: Int, rating: Float?)
 

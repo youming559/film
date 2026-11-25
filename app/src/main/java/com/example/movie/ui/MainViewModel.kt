@@ -48,10 +48,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 加入 / 移出看单。
+     *
+     * 不再依赖 watchlistIds 这个 StateFlow 的当前值做判断 ——
+     * WhileSubscribed 的流在收集者短暂脱离（弹窗重组、切页）时可能仍是空列表，
+     * 导致「移出看单」被误判成「加入看单」，onConflict = REPLACE 直接把数据写回去，
+     * 表现为「主 App 删不掉看单」。
+     *
+     * 改为直接查库（source of truth），保证删除一定执行。
+     */
     fun toggleWatchlist(item: TmdbItem) {
         viewModelScope.launch {
-            if (watchlistIds.value.contains(item.id)) repo.remove(item.id)
-            else repo.add(item)
+            try {
+                if (repo.exists(item.id)) repo.remove(item.id) else repo.add(item)
+            } catch (e: Exception) {
+                error.value = "操作看单失败：${e.message}"
+            }
+        }
+    }
+
+    /** 明确移出看单（详情弹窗、看单页长按/滑动都用这个，不再靠 toggle 猜） */
+    fun removeFromWatchlist(id: Int) {
+        viewModelScope.launch {
+            try {
+                repo.remove(id)
+            } catch (e: Exception) {
+                error.value = "移出看单失败：${e.message}"
+            }
         }
     }
 

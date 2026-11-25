@@ -44,7 +44,8 @@ fun DetailDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = {
-                vm.toggleWatchlist(item)
+                // 明确区分加入 / 移出，不靠 toggle 内部状态判断，删除必定生效
+                if (inWatchlist) vm.removeFromWatchlist(item.id) else vm.toggleWatchlist(item)
                 onDismiss()
             }) {
                 Text(if (inWatchlist) "移出看单" else "加入看单")

@@ -22,6 +22,9 @@ class WatchlistRepository(private val dao: WatchlistDao) {
 
     suspend fun remove(id: Int) = dao.delete(id)
 
+    /** 直接问数据库，避免读缓存流造成的状态误判 */
+    suspend fun exists(id: Int): Boolean = dao.exists(id)
+
     suspend fun rate(id: Int, rating: Float?) = dao.updateRating(id, rating)
 
     suspend fun setRemind(id: Int, enabled: Boolean) = dao.updateRemind(id, enabled)
